@@ -9,6 +9,16 @@
 	"compatibility_date": "2026-01-18",
 	"observability": {
 		"enabled": true
+	},
+	"d1_databases": [
+		{
+			"binding": "feedback_db",
+			"database_name": "feedback_db",
+			"database_id": "917720ff-9d56-4bd4-9fac-63f677c998a1"
+		}
+	],
+	"ai": {
+		"binding": "AI"
 	}
 	// Smart Placement: https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
 	// "placement": { "mode": "smart" }
