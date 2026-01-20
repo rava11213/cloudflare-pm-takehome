@@ -8,6 +8,7 @@ declare namespace Cloudflare {
 	interface Env {
 		feedback_db: D1Database;
 		AI: Ai;
+		OPENAI_API_KEY?: string;
 	}
 }
 interface Env extends Cloudflare.Env {}

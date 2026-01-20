@@ -118,13 +118,12 @@ Feedback: "${text}"
 
 Response format: {"sentiment": "positive|negative|neutral", "urgency": "high|medium|low"}`;
 
-	const response = await env.AI.run('@cf/meta/llama-3-8b-instruct', {
-		messages: [
+	const response = await env.AI.run('@cf/openai/gpt-oss-120b', {
+		input: [
 			{ role: 'system', content: 'You are a feedback classification assistant. Always respond with valid JSON only.' },
 			{ role: 'user', content: prompt }
-		],
-		max_tokens: 100
-	});
+		]
+	} as any) as any;
 
 	// Extract JSON from response
 	const responseText = response.response || JSON.stringify(response);
@@ -172,9 +171,9 @@ Response format: {"sentiment": "positive|negative|neutral", "urgency": "high|med
  */
 async function generateSummary(env: Env): Promise<Response> {
 	try {
-		const today = new Date().toISOString().split('T')[0];
+		const today = '2026-01-18';
 		
-		// Get all processed feedback for today
+		// Get all processed feedback for the specified date
 		const feedbackResult = await env.feedback_db.prepare(
 			`SELECT content, sentiment, urgency FROM feedback 
 			 WHERE DATE(created_at) = ? AND sentiment IS NOT NULL AND urgency IS NOT NULL
@@ -184,7 +183,7 @@ async function generateSummary(env: Env): Promise<Response> {
 		if (!feedbackResult.success || !feedbackResult.results || feedbackResult.results.length === 0) {
 			return new Response(JSON.stringify({ 
 				date: today,
-				message: 'No processed feedback found for today' 
+				message: 'No processed feedback found for the specified date' 
 			}), {
 				headers: { 'content-type': 'application/json' }
 			});
@@ -208,43 +207,65 @@ Data:
 
 ${feedbackJson}
 
-Produce a concise PM-facing summary with EXACTLY the following structure:
+Produce a concise PM-facing summary with EXACTLY the following structure. Use the exact section headers shown:
 
-1. Headline (1 sentence)
-   - Describe the single most critical product risk revealed by today's feedback
-   - Be specific, not generic
+**Summary**
 
-2. Top 3 Themes (bulleted)
-   - Synthesize feedback into user problems, not feature lists
-   - Avoid repeating similar wording across bullets
+[One sentence describing the single most critical product risk. Be specific about the risk and its impact.]
 
-3. Critical Issues (max 3 bullets)
-   - Focus on root causes, not symptoms
-   - Explain why these issues are blocking or risky
+**Key Themes**
 
-4. Recommendation (2 bullets max)
-   - Be opinionated
-   - Suggest what to do first and what can wait
+[Three bullet points synthesizing feedback into user problems. Focus on developer pain points, not feature requests. Avoid repeating similar wording across bullets.]
+
+**Critical Issues**
+
+[Maximum 3 bullet points focusing on root causes, not symptoms. Explain why these issues are blocking or risky. Use concrete examples when possible.]
+
+**Recommendation**
+
+[Maximum 2 bullet points that are opinionated and actionable. Suggest what to do first and what can wait. Be specific about actions, timelines, or priorities.]
 
 Guidelines:
+- Use the exact section headers: **Summary**, **Key Themes**, **Critical Issues**, **Recommendation**
 - Do NOT repeat phrases across sections
-- Do NOT say "prioritize" or "address issues" without specifics
+- Do NOT use vague language like "prioritize" or "address issues" without specifics
 - Write as if this will be read by a Director of Product
-- Keep the entire response under 150 words`;
+- Keep the entire response under 150 words
+- Focus on developer experience, runtime stability, deployment workflows, and tooling reliability`;
 
 		// Generate summary using Workers AI
-		const aiResponse = await env.AI.run('@cf/meta/llama-3-8b-instruct', {
-			messages: [
+		const aiResponse = await env.AI.run('@cf/openai/gpt-oss-120b', {
+			input: [
 				{ 
 					role: 'system', 
-					content: 'You are a senior product manager at Cloudflare writing for a Director of Product. Generate concise, opinionated summaries that focus on root causes and specific recommendations. Follow the exact structure provided.' 
+					content: 'You are a senior product manager at Cloudflare writing for a Director of Product. Generate concise, opinionated summaries that focus on root causes and specific recommendations. Follow the exact structure provided. Context: This feedback is about Cloudflare Workers and the Cloudflare Developer Platform. Focus on developer experience, runtime stability, deployment workflows, and tooling reliability. Avoid consumer SaaS language such as refunds or end-user outages.' 
 				},
 				{ role: 'user', content: prompt }
-			],
-			max_tokens: 300
-		});
+			]
+		} as any) as any;
 
-		const summaryText = aiResponse.response || JSON.stringify(aiResponse);
+		// Extract text from gpt-oss-120b response format
+		let summaryText: string;
+		try {
+			// Response might be a JSON string or object
+			const parsed = typeof aiResponse === 'string' ? JSON.parse(aiResponse) : aiResponse;
+			
+			if (parsed.output && Array.isArray(parsed.output)) {
+				// Extract text from output array
+				const textParts = parsed.output
+					.filter((item: any) => item.type === 'message' && item.content && Array.isArray(item.content))
+					.flatMap((item: any) => item.content)
+					.filter((c: any) => c.type === 'output_text' && c.text)
+					.map((c: any) => c.text);
+				summaryText = textParts.join('') || JSON.stringify(parsed);
+			} else if (parsed.response) {
+				summaryText = parsed.response;
+			} else {
+				summaryText = JSON.stringify(parsed);
+			}
+		} catch (error) {
+			summaryText = typeof aiResponse === 'string' ? aiResponse : JSON.stringify(aiResponse);
+		}
 
 		return new Response(JSON.stringify({
 			date: today,
@@ -309,25 +330,30 @@ function parseSummary(summaryText: string): {
 	criticalIssues: string[];
 	recommendation: string[];
 } {
-	const headlineMatch = summaryText.match(/\*\*Headline:\*\*(.+?)(?:\n|$)/i) || 
-		summaryText.match(/Headline[:\-]?\s*(.+?)(?:\n|$)/i);
+	// Match **Summary** or **Headline** format
+	const headlineMatch = summaryText.match(/\*\*Summary[:\*]?\*\*\s*\n?(.+?)(?=\n\*\*|$)/is) || 
+		summaryText.match(/\*\*Headline[:\*]?\*\*\s*\n?(.+?)(?=\n\*\*|$)/is) ||
+		summaryText.match(/Summary[:\-]?\s*\n?(.+?)(?=\n\*\*|$)/is) ||
+		summaryText.match(/Headline[:\-]?\s*\n?(.+?)(?=\n\*\*|$)/is);
 	const headline = headlineMatch ? headlineMatch[1].trim() : 'No headline available';
 
-	// Extract themes
-	const themesMatch = summaryText.match(/\*\*Top 3 Themes:\*\*([\s\S]*?)(?:\*\*|$)/i) ||
-		summaryText.match(/Top 3 Themes[:\-]?\s*([\s\S]*?)(?:\*\*|$)/i);
+	// Extract themes - match **Key Themes** or **Top 3 Themes**
+	const themesMatch = summaryText.match(/\*\*Key\s*Themes[:\*]?\*\*\s*\n?([\s\S]*?)(?=\n\*\*|$)/i) ||
+		summaryText.match(/\*\*Top\s*3\s*Themes[:\*]?\*\*\s*\n?([\s\S]*?)(?=\n\*\*|$)/i) ||
+		summaryText.match(/Key\s*Themes[:\-]?\s*\n?([\s\S]*?)(?=\n\*\*|$)/i) ||
+		summaryText.match(/Top\s*3\s*Themes[:\-]?\s*\n?([\s\S]*?)(?=\n\*\*|$)/i);
 	const themesText = themesMatch ? themesMatch[1] : '';
 	const themes = extractBullets(themesText);
 
 	// Extract critical issues
-	const issuesMatch = summaryText.match(/\*\*Critical Issues:\*\*([\s\S]*?)(?:\*\*|$)/i) ||
-		summaryText.match(/Critical Issues[:\-]?\s*([\s\S]*?)(?:\*\*|$)/i);
+	const issuesMatch = summaryText.match(/\*\*Critical\s*Issues[:\*]?\*\*\s*\n?([\s\S]*?)(?=\n\*\*|$)/i) ||
+		summaryText.match(/Critical\s*Issues[:\-]?\s*\n?([\s\S]*?)(?=\n\*\*|$)/i);
 	const issuesText = issuesMatch ? issuesMatch[1] : '';
 	const criticalIssues = extractBullets(issuesText);
 
 	// Extract recommendation
-	const recMatch = summaryText.match(/\*\*Recommendation:\*\*([\s\S]*?)(?:\*\*|$)/i) ||
-		summaryText.match(/Recommendation[:\-]?\s*([\s\S]*?)(?:\*\*|$)/i);
+	const recMatch = summaryText.match(/\*\*Recommendation[:\*]?\*\*\s*\n?([\s\S]*?)(?=\n\*\*|$)/i) ||
+		summaryText.match(/Recommendation[:\-]?\s*\n?([\s\S]*?)(?=\n\*\*|$)/i);
 	const recText = recMatch ? recMatch[1] : '';
 	const recommendation = extractBullets(recText);
 
@@ -453,88 +479,101 @@ function renderDashboardHTML(data: {
 		* { margin: 0; padding: 0; box-sizing: border-box; }
 		body {
 			font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
-			line-height: 1.7;
+			line-height: 1.5;
 			color: #1a1a1a;
-			background: #ffffff;
-			padding: 60px 40px;
-			max-width: 900px;
+			background: #fafafa;
+			padding: 24px;
+			max-width: 800px;
 			margin: 0 auto;
 		}
 		header {
-			margin-bottom: 60px;
-			padding-bottom: 30px;
-			border-bottom: 2px solid #e0e0e0;
+			margin-bottom: 20px;
+			padding-bottom: 12px;
+			border-bottom: 1px solid #e0e0e0;
 		}
 		header h1 {
-			font-size: 32px;
+			font-size: 24px;
 			font-weight: 600;
 			color: #000;
-			letter-spacing: -0.5px;
+			letter-spacing: -0.3px;
+			margin-bottom: 2px;
 		}
 		header p {
 			color: #666;
-			margin-top: 8px;
-			font-size: 16px;
+			font-size: 13px;
 		}
 		.date {
-			color: #666;
-			font-size: 14px;
-			margin-bottom: 40px;
+			color: #888;
+			font-size: 12px;
+			margin-bottom: 16px;
+			text-transform: uppercase;
+			letter-spacing: 0.5px;
 		}
 		.headline {
-			font-size: 28px;
+			font-size: 20px;
 			font-weight: 600;
 			line-height: 1.4;
 			color: #000;
-			margin-bottom: 50px;
-			padding-bottom: 30px;
-			border-bottom: 1px solid #e0e0e0;
+			margin-bottom: 20px;
+			padding-bottom: 16px;
+			border-bottom: 1px solid #e8e8e8;
 		}
 		.section {
-			margin-bottom: 50px;
+			margin-bottom: 20px;
+			background: #fff;
+			border: 1px solid #e8e8e8;
+			border-radius: 4px;
+			padding: 16px;
 		}
 		.section h2 {
-			font-size: 14px;
+			font-size: 11px;
 			font-weight: 600;
-			color: #333;
-			margin-bottom: 20px;
+			color: #666;
+			margin-bottom: 12px;
 			text-transform: uppercase;
-			letter-spacing: 0.5px;
+			letter-spacing: 0.8px;
 		}
 		.section ul {
 			list-style: none;
 			padding: 0;
 		}
 		.section li {
-			margin-bottom: 16px;
-			padding-left: 24px;
+			margin-bottom: 10px;
+			padding-left: 16px;
 			position: relative;
-			color: #444;
-			line-height: 1.7;
+			color: #333;
+			line-height: 1.5;
+			font-size: 14px;
+		}
+		.section li:last-child {
+			margin-bottom: 0;
 		}
 		.section li:before {
 			content: "•";
 			position: absolute;
-			left: 0;
-			color: #666;
+			left: 4px;
+			color: #999;
 			font-weight: bold;
 		}
 		.critical {
-			background: #f8f8f8;
-			padding: 30px;
-			border-left: 4px solid #d32f2f;
+			border-left: 3px solid #d32f2f;
+		}
+		.critical h2 {
+			color: #d32f2f;
 		}
 		.recommendation {
-			background: #f5f5f5;
-			padding: 30px;
-			border-left: 4px solid #1976d2;
+			border-left: 3px solid #1976d2;
+		}
+		.recommendation h2 {
+			color: #1976d2;
 		}
 		footer {
-			margin-top: 80px;
-			padding-top: 40px;
-			border-top: 1px solid #e0e0e0;
-			color: #666;
-			font-size: 14px;
+			margin-top: 32px;
+			padding-top: 16px;
+			border-top: 1px solid #e8e8e8;
+			color: #999;
+			font-size: 11px;
+			text-align: center;
 		}
 	</style>
 </head>
@@ -549,7 +588,7 @@ function renderDashboardHTML(data: {
 	<div class="headline">${data.headline || 'No headline available'}</div>
 
 	<div class="section">
-		<h2>Top 3 Themes</h2>
+		<h2>Key Themes</h2>
 		<ul>
 			${(data.themes || []).map(theme => `<li>${theme}</li>`).join('')}
 		</ul>
