@@ -3,7 +3,7 @@
 A lightweight prototype that aggregates noisy customer feedback and turns it into clear, actionable product insights using Cloudflare’s developer platform.
 
 ## Live Demo
-**Demo:** <https://drive.google.com/drive/my-drive?dmr=1&ec=wgc-drive-hero-goto>
+**Demo:** <https://drive.google.com/file/d/1w1u8A62grDZ9M_ecMIueyT9PmJPnjaRj/view?usp=sharing>
 
 
 ## Problem Statement
