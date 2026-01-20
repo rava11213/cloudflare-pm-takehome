@@ -5,7 +5,6 @@ A lightweight prototype that aggregates noisy customer feedback and turns it int
 ## Live Demo
 **Demo:** <https://drive.google.com/drive/my-drive?dmr=1&ec=wgc-drive-hero-goto>
 
----
 
 ## Problem Statement
 
@@ -17,7 +16,6 @@ The goal of this prototype is to help PMs quickly answer:
 - How urgent are they?
 - What should we do next?
 
----
 
 ## What This Prototype Does
 
@@ -28,7 +26,6 @@ The goal of this prototype is to help PMs quickly answer:
 
 This project intentionally focuses on **signal extraction**, not full ingestion pipelines or alerting systems.
 
----
 
 ## Architecture Overview
 
